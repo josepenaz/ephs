@@ -190,7 +190,7 @@ class Query:
             for idx in ast_idxs:
                 ast = self.asts[idx]
                 tr = self.ref_jdtdb[ast['epoch']]
-                r = cutils.state_equatorial_heliocentric(tq, tr, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch'])
+                r = pycutils.state_equatorial_heliocentric(tq, tr, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch'])
                 states.append(r)
             [xh ,yh, zh] = np.array(states)[:,:3].T
             # Instantaneous ephemerides are calculated for all asteroids.
@@ -208,7 +208,7 @@ class Query:
                 ast = self.asts[idx]
                 tr = self.ref_jdtdb[ast['epoch']]
                 args =  tq, obsx, obsy, obsz, tr, ast['a'], ast['e'], ast['incl'], ast['Node'], ast['Arg_Peri'], ast['M_epoch']
-                coords.append(cutils.apparent_coords_equatorial_heliocentric(*args))
+                coords.append(pycutils.apparent_coords_equatorial_heliocentric(*args))
         else:
             args = []
             for idx in ast_idxs:
@@ -216,7 +216,7 @@ class Query:
                 tr = self.ref_jdtdb[ast['epoch']]
                 args.append((tq, obsx, obsy, obsz, tr, ast['a'], ast['e'], ast['incl'], ast['Node'], ast['Arg_Peri'], ast['M_epoch']))
             pool = mp.Pool(processes=njobs)
-            coords = pool.starmap(cutils.apparent_coords_equatorial_heliocentric, args)
+            coords = pool.starmap(pycutils.apparent_coords_equatorial_heliocentric, args)
             pool.close()
 
         # Getting final coordinates
@@ -311,7 +311,7 @@ class Query:
                 tr = self.ref_jdtdb[ast['epoch']]; dt = tq-tr
                 ss_states = dicc_ss_states[ast['epoch']]
                 args =  tr, tr, ast['a'], ast['e'], ast['incl'], ast['Node'], ast['Arg_Peri'], ast['M_epoch']
-                state_ast=cutils.state_equatorial_heliocentric(*args)
+                state_ast=pycutils.state_equatorial_heliocentric(*args)
                 coords.append(get_apparent_coordinates(state_ast, ss_states, obsx, obsy, obsz, dt))
         else:
             arguments = []
@@ -320,7 +320,7 @@ class Query:
                 tr = self.ref_jdtdb[ast['epoch']]; dt = tq-tr
                 ss_states = dicc_ss_states[ast['epoch']]
                 args =  tr, tr, ast['a'], ast['e'], ast['incl'], ast['Node'], ast['Arg_Peri'], ast['M_epoch']
-                state = cutils.state_equatorial_heliocentric(*args)
+                state = pycutils.state_equatorial_heliocentric(*args)
                 arguments.append((state, ss_states, obsx, obsy, obsz, dt))
             pool = mp.Pool(processes=njobs)
             coords = pool.starmap(get_apparent_coordinates, arguments)
@@ -419,7 +419,7 @@ class Query:
         for idx in ast_idxs:
             ast = self.asts[idx]
             tr = self.ref_jdtdb[ast['epoch']]
-            r = cutils.state_equatorial_heliocentric(tq, tr, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch'])
+            r = pycutils.state_equatorial_heliocentric(tq, tr, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch'])
             states.append(r)
         [xh ,yh, zh] = np.array(states)[:,:3].T
         # Instantaneous ephemerides are calculated for all asteroids.
@@ -442,7 +442,7 @@ class Query:
                 tr = self.ref_jdtdb[ast['epoch']]; dt = tq-tr
                 ss_states = dicc_ss_states[ast['epoch']]
                 args =  tr, tr, ast['a'], ast['e'], ast['incl'], ast['Node'], ast['Arg_Peri'], ast['M_epoch']
-                state_ast=cutils.state_equatorial_heliocentric(*args)
+                state_ast=pycutils.state_equatorial_heliocentric(*args)
                 coords.append(get_apparent_coordinates(state_ast, ss_states, obsx, obsy, obsz, dt))
         else:
             arguments = []
@@ -451,7 +451,7 @@ class Query:
                 tr = self.ref_jdtdb[ast['epoch']]; dt = tq-tr
                 ss_states = dicc_ss_states[ast['epoch']]
                 args =  tr, tr, ast['a'], ast['e'], ast['incl'], ast['Node'], ast['Arg_Peri'], ast['M_epoch']
-                state = cutils.state_equatorial_heliocentric(*args)
+                state = pycutils.state_equatorial_heliocentric(*args)
                 arguments.append((state, ss_states, obsx, obsy, obsz, dt))
             pool = mp.Pool(processes=njobs)
             coords = pool.starmap(get_apparent_coordinates, arguments)
@@ -561,11 +561,11 @@ class Query:
         # Getting apparent coordinates
         args0 = tq, obsx, obsy, obsz, tr
         if njobs==1:
-            coords = np.array([cutils.apparent_coords_equatorial_heliocentric(*args0,*args1) for args1 in params])
+            coords = np.array([pycutils.apparent_coords_equatorial_heliocentric(*args0,*args1) for args1 in params])
         else:
             args = [(*args0,*args1) for args1 in params]
             pool = mp.Pool(processes=njobs)
-            coords = np.array(pool.starmap(cutils.apparent_coords_equatorial_heliocentric, args))
+            coords = np.array(pool.starmap(pycutils.apparent_coords_equatorial_heliocentric, args))
             pool.close()
             
         # Getting final coordinates
@@ -814,12 +814,12 @@ class Query:
         
         # Getting apparent coordinates using 2-body solution
         #args0 = tq, obsx, obsy, obsz, tr
-        #coords = np.array([cutils.apparent_coords_equatorial_heliocentric(*args0,*args1) for args1 in params])
+        #coords = np.array([pycutils.apparent_coords_equatorial_heliocentric(*args0,*args1) for args1 in params])
         #ra = coords[:,0]; dec = coords[:,1]
         
         # Getting instantaneous states using 2-body solution (about 3s faster than getting apparent coordinates)
         args0 = tq, tr
-        states_ = np.array([cutils.state_equatorial_heliocentric(*args0,*args1) for args1 in params])
+        states_ = np.array([pycutils.state_equatorial_heliocentric(*args0,*args1) for args1 in params])
         [xh ,yh, zh] = np.array(states_)[:,:3].T
         # Instantaneous ephemerides are calculated for all asteroids.
         xe = xh-obsx; ye = yh-obsy; ze = zh-obsz
@@ -1009,7 +1009,7 @@ class Query:
         
         xe = x-obx; ye = y-oby; ze = z-obz
         ra  = np.arctan2( ye, xe ); dec = np.arctan2( ze, np.sqrt(xe*xe+ye*ye) ) # In rads
-        neg_ra = ra < 0; ra[neg_ra] += cutils.TWOPI # In rads
+        neg_ra = ra < 0; ra[neg_ra] += pycutils.TWOPI # In rads
         to_deg = 180/np.pi; ra *= to_deg; dec *= to_deg
         
         ast_geo = [-xe, -ye, -ze]  # Obs vector from ast

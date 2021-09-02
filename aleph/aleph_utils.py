@@ -1,7 +1,7 @@
 import astropy.constants as const
 from astropy.coordinates import SkyCoord, get_body_barycentric, get_body_barycentric_posvel, solar_system_ephemeris, EarthLocation, GCRS
 from astropy import units as u
-from . import cutils
+from . import pycutils
 import rebound
 import numpy as np
 
@@ -31,7 +31,7 @@ def get_apparent_coordinates(state_ast, states_ss, obsx, obsy, obsz, delta_tdb):
     vxh,vyh,vzh = ast.vx-sun.vx,ast.vy-sun.vy,ast.vz-sun.vz
     xe = xh-obsx; ye = yh-obsy; ze = zh-obsz
     ra_geo  = np.arctan2( ye, xe ); dec_geo = np.arctan2( ze, np.sqrt(xe*xe+ye*ye) )
-    if ra_geo < 0: ra_geo += cutils.TWOPI
+    if ra_geo < 0: ra_geo += pycutils.TWOPI
     return ra_geo, dec_geo, xh,yh,zh, vxh,vyh,vzh, lighttime/au_to_d
 
 ################################################################

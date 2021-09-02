@@ -5,5 +5,10 @@ Untitled.ipynb
 aleph/__pycache__
 cutils.o
 pyaleph
+pyproject.toml
+aleph/AstEph.py
+build/
+dist/
+*.egg-info/
 
 *~

@@ -1,9 +1,16 @@
 import ctypes
 import os
 
+# Find .so full suffix
+import sysconfig
+suffix = sysconfig.get_config_var('EXT_SUFFIX')
+if suffix is None:
+    suffix = ".so"
+
+
 PACKAGE_PATH = os.path.abspath(os.path.dirname(__file__))
 
-cutils = ctypes.CDLL(PACKAGE_PATH+'/cutils.o')
+cutils = ctypes.CDLL(PACKAGE_PATH+"/../cutils"+suffix)
 
 cutils.state_equatorial_heliocentric.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
                                                  ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,

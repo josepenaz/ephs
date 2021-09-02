@@ -1,8 +1,7 @@
 import urllib, gzip
 import os, time
 import numpy as np
-from . import cutils
-from scipy.optimize import root_scalar
+from . import pycutils
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, get_body_barycentric, get_body_barycentric_posvel, solar_system_ephemeris, EarthLocation, GCRS
 import multiprocessing as mp
@@ -193,7 +192,7 @@ class OrbParams:
             results = []
             for idx in ast_indexs:
                 ast = self.asts[idx]
-                r = cutils.state_equatorial_heliocentric(t, t, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch'])
+                r = pycutils.state_equatorial_heliocentric(t, t, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch'])
                 results.append(r)
         else:
             pool = mp.Pool(processes=njobs)
@@ -201,7 +200,7 @@ class OrbParams:
             for idx in ast_indexs:
                 ast = self.asts[idx]
                 arguments.append((t, t, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch']))
-            results = pool.starmap(cutils.state_equatorial_heliocentric, arguments)
+            results = pool.starmap(pycutils.state_equatorial_heliocentric, arguments)
             pool.close()
         return results
     
@@ -499,7 +498,7 @@ class OrbParams:
             states = df.values
             
             params = []
-            for state in states: params.append( cutils.orbparams_from_state(*state) )
+            for state in states: params.append( pycutils.orbparams_from_state(*state) )
             T = time.time()-ti_#; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
             if verbose: print('       Done in %05.2f s' %(T))
             
@@ -515,7 +514,7 @@ class OrbParams:
             conn.execute("create table %s(name TEXT,a REAL,e REAL,i REAL,longnode REAL,argperi REAL,meananom REAL, PRIMARY KEY(name))" %table_name)
             ## Fill state table
             conn.executemany("insert into "+table_name+"(name,a,e,i,longnode,argperi,meananom) values (?,?,?,?,?,?,?)", data)
-            for state in states: params.append( cutils.orbparams_from_state(*state) )
+            for state in states: params.append( pycutils.orbparams_from_state(*state) )
             T = time.time()-ti_#; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
             if verbose: print('       Done in %05.2f s' %(T))
 
