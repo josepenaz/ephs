@@ -81,7 +81,11 @@ def download_orbparams_catalogue(service, filename):
         #url = "https://www.minorplanetcenter.org/iau/MPCORB/MPCORB.DAT"
         url = 'https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT.gz'
     elif service == 'Lowell':
-        url = 'ftp://ftp.lowell.edu/pub/elgb/astorb.dat.gz'
+        #url = 'ftp://ftp.lowell.edu/pub/elgb/astorb.dat.gz'
+        ve = "Downloading 'astorb.dat' via FTP is not longer supported. "
+        ve+= "Download it yourself in https://asteroid.lowell.edu/main/astorb/ and"
+        ve+= "provide it via 'filename' parameter."
+        raise ValueError(ve)
     else: raise ValueError("'service' must be 'Lowell' or 'MPC'")
 
     response = urllib.request.urlopen(url)
@@ -91,7 +95,7 @@ def download_orbparams_catalogue(service, filename):
 PACKAGE_PATH = os.path.abspath(os.path.dirname(__file__))
 
 class OrbParams:
-    def __init__ (self, service='Lowell', update=False, **kwargs):
+    def __init__ (self, service='MPC', update=False, **kwargs):
         """
         Reads an orbital parameter file for asteroids and computes ephemerides
         
@@ -309,7 +313,7 @@ class OrbParams:
         """
         return sqlite3.connect(sqlfile)
         
-    def adding_states_into_db (self, tdb_jds, sqlfile=PACKAGE_PATH+'/aleph_states.db', njobs=1, onebodysim=False, verbose=True):
+    def adding_states_into_db (self, tdb_jds, sqlfile=PACKAGE_PATH+'/aleph_states.db', njobs=1, onebodysim=True, verbose=True):
         """
         Integrates states of all bodies in 'sqlfile' in the given 'tdb_jds' epochs
         starting from the states already stored in the database.

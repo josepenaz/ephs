@@ -1,11 +1,10 @@
 .ipynb_checkpoints
-astorb_2.dat
-MPCORB_0.DAT
+astorb*
+MPCORB*
 Untitled.ipynb
 aleph/__pycache__
 cutils.o
 pyaleph
-pyproject.toml
 aleph/AstEph.py
 build/
 dist/

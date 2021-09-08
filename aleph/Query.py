@@ -19,7 +19,7 @@ PACKAGE_PATH = os.path.abspath(os.path.dirname(__file__))
 IS_SQL_DB = os.path.exists(PACKAGE_PATH+'/aleph_states.db')
 
 class Query:
-    def __init__(self, service='Lowell', open_db=IS_SQL_DB, dbfile=PACKAGE_PATH+'/aleph_states.db', **kwargs):
+    def __init__(self, service='MPC', open_db=IS_SQL_DB, dbfile=PACKAGE_PATH+'/aleph_states.db', **kwargs):
         """
         Initializing 'Query' enviroment. Orbital parameters are loaded
         and the sql database with asteroid's states is connected.
@@ -79,50 +79,50 @@ class Query:
             self.numbers_db = np.array([getint(num) for num in self.asts_db.number.values])
             self.names_db = self.asts_db.index.values; self.H_db = self.asts_db.H.values; self.G_db = self.asts_db.G.values
     
-    def query(self, field_center, radius, **kwargs):
-        """
-        Query for asteroides visible in a field.
-        
-        Parameters:
-                    field_center: astropy.coordinates.SkyCoord element with center coordinate of field.
-                    radius: astropy.units.Quantity with radius of field.
-                    
-        Optional Parameters:
-                    epoch: astropy.time.Time with epoch for query. Default to 'now'.
-                    observer: astropy.coordinates.EarthLocation with observer's position. Default to geocenter.
-                    njobs: Number of parallel processes to calculate asteroids' apparent positions. Default: 1.
-                    method: 'db', '2B' or 'NB'. Default 'db'.
-                           'db': Queries database for bodies near field and integrates them.
-                           '2B': Calculates all bodies positions using 2-Bodies equations and retrieves bodies in
-                                 requested field.
-                           'NB': Calculates all bodies positions using N-Bodies integration (Sun, planets, Pluto and 
-                                 massless asteroids) and retrieves bodies in requested field.
-                    db_query_radius: Radius to query database. Only usefull if 'method'='db'.
-                                     It should be greater than 'radius'. Default: 5 degs.
-                    ast_names: Asteroids' name from Query.asts. Ephemerides will be calculated only for those
-                               asteroids.
-                    
-        Returns:
-                 astropy.table with computed ephemerides.
-                  column 'number': Asteroid's number (from MPC).
-                  column 'name': Asteroid's name (from MPC).
-                  column 'ra': Asteroid's apparent right ascension (as seen by the observer).
-                  column 'dec': Asteroid's apparent declination (as seen by the observer).
-                  column 'x': Asteroid's heliocentric cartesian 'x' coordinate at light-emission time.
-                  column 'y': Asteroid's heliocentric cartesian 'y' coordinate at light-emission time.
-                  column 'z': Asteroid's heliocentric cartesian 'z' coordinate at light-emission time.
-                  column 'vx': Asteroid's heliocentric cartesian 'vx' velocity at light-emission time.
-                  column 'vy': Asteroid's heliocentric cartesian 'vy' velocity at light-emission time.
-                  column 'vz': Asteroid's heliocentric cartesian 'vz' velocity at light-emission time.
-                  column 'lightdist': Distance travel by light from asteroid's coordinate until observer.
-        """
-        # Selecting method
-        if not 'method' in kwargs: return self.query_db(field_center, radius, **kwargs)
-        else:
-            if kwargs['method']=='db': return self.query_db(field_center, radius, **kwargs)
-            elif kwargs['method']=='2B': return self.query_2b(field_center, radius, **kwargs)
-            elif kwargs['method']=='NB': return self.query_nb(field_center, radius, **kwargs)
-            else: raise ValueError("'method' must be one of 'db', '2B' or 'NB'")
+    #def query(self, field_center, radius, **kwargs):
+    #    """
+    #    Query for asteroides visible in a field.
+    #    
+    #    Parameters:
+    #                field_center: astropy.coordinates.SkyCoord element with center coordinate of field.
+    #                radius: astropy.units.Quantity with radius of field.
+    #                
+    #    Optional Parameters:
+    #                epoch: astropy.time.Time with epoch for query. Default to 'now'.
+    #                observer: astropy.coordinates.EarthLocation with observer's position. Default to geocenter.
+     #               njobs: Number of parallel processes to calculate asteroids' apparent positions. Default: 1.
+     #               method: 'db', '2B' or 'NB'. Default 'db'.
+     #                      'db': Queries database for bodies near field and integrates them.
+     #                      '2B': Calculates all bodies positions using 2-Bodies equations and retrieves bodies in
+     #                            requested field.
+     #                      'NB': Calculates all bodies positions using N-Bodies integration (Sun, planets, Pluto and 
+     #                            massless asteroids) and retrieves bodies in requested field.
+     #               db_query_radius: Radius to query database. Only usefull if 'method'='db'.
+     #                                It should be greater than 'radius'. Default: 5 degs.
+     #               ast_names: Asteroids' name from Query.asts. Ephemerides will be calculated only for those
+     #                          asteroids.
+     #               
+     #   Returns:
+     #            astropy.table with computed ephemerides.
+     #             column 'number': Asteroid's number (from MPC).
+     #             column 'name': Asteroid's name (from MPC).
+     #             column 'ra': Asteroid's apparent right ascension (as seen by the observer).
+     #             column 'dec': Asteroid's apparent declination (as seen by the observer).
+     #             column 'x': Asteroid's heliocentric cartesian 'x' coordinate at light-emission time.
+     #             column 'y': Asteroid's heliocentric cartesian 'y' coordinate at light-emission time.
+     #             column 'z': Asteroid's heliocentric cartesian 'z' coordinate at light-emission time.
+     #             column 'vx': Asteroid's heliocentric cartesian 'vx' velocity at light-emission time.
+     #             column 'vy': Asteroid's heliocentric cartesian 'vy' velocity at light-emission time.
+     #             column 'vz': Asteroid's heliocentric cartesian 'vz' velocity at light-emission time.
+     #             column 'lightdist': Distance travel by light from asteroid's coordinate until observer.
+     #   """
+     #   # Selecting method
+     #   if not 'method' in kwargs: return self.query_db(field_center, radius, **kwargs)
+     #   else:
+     #       if kwargs['method']=='db': return self.query_db(field_center, radius, **kwargs)
+     #       elif kwargs['method']=='2B': return self.query_2b(field_center, radius, **kwargs)
+     #       elif kwargs['method']=='NB': return self.query_nb(field_center, radius, **kwargs)
+     #       else: raise ValueError("'method' must be one of 'db', '2B' or 'NB'")
     
     
     def query_2b_cat(self, field_center, radius, **kwargs):
@@ -938,7 +938,7 @@ class Query:
         else: epochs0 = Time([Time.now().jd], format='jd')
         
         c = self.cursor
-        epochs = np.sort(epochs0); iepochs = np.argsort(epochs0) # Epochs are sorted to speed up integration
+        iepochs = np.argsort(epochs0.jd); epochs = epochs0[iepochs] # Epochs are sorted to speed up integration
         tqs  = epochs.tdb.jd
         tmin = min(tqs); tmax = min(tqs)
         

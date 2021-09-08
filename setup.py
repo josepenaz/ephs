@@ -16,8 +16,8 @@ cutilsmodule = Extension('cutils',
                     )
 
 setup(
-      name="aleph",
-      version="0.0.1",
+      name="aleph", #"astro_aleph",
+      version="0.1",
       author="Jose Pena Z.",
       author_email="jpena@das.uchile.cl",
       description="ALeRCE's Ephemeris",
@@ -39,6 +39,7 @@ setup(
                         'astropy>=4.2',
                         'pandas>=1.1.3',
                         'rebound>=3.12.2',
+                        'jplephem'
                         ],
       package_data = {'aleph':['cutils.h']},
       ext_modules = [cutilsmodule],
