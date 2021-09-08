@@ -19,7 +19,7 @@ cd ephs
 python3 -m pip install --upgrade pip
 python3 -m pip install --upgrade build
 python3 -m build
-python3 -m pip install dists aleph-X.X.tar.gz
+python3 -m pip install dist/aleph-X.X.tar.gz
 ```
 
 ## Getting started - DataBase class
