@@ -6,6 +6,11 @@ You can choose if ephemeris are calculated using the simple 2-Body equations (fa
 
 ## Instalation
 
+You can find Aleph in pip:
+``` {.sourceCode .bash}
+python3 -m pip install astro-aleph
+```
+
 You can clone (or download) this repository and install it from there:
 ``` {.sourceCode .bash}
 git clone https://github.com/josepenaz/ephs.git
