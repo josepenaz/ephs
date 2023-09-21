@@ -931,7 +931,7 @@ class Query:
         
         if 'epochs' in kwargs:
             if not isinstance(kwargs['epochs'], Time):
-                print('ERROR'); return
+                raise TypeError('Expected astropy.time.Time, received %s' %(type(kwargs['epochs'])))
             if isinstance(kwargs['epochs'].jd, np.ndarray):
                 epochs0 = kwargs['epochs']
             else: epochs0 = Time([kwargs['epochs']])
