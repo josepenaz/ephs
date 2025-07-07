@@ -149,28 +149,24 @@ class OrbParams:
             raise ValueError(err)
         if self.service == 'MPC':
             asts = []
-            is_header=True; is_numbered=False; is_unnumbered=False; is_1oposition=False
-            i = 0; fi = open(filename,'r')
+            #is_numbered=True; is_unnumbered=False; is_1oposition=False
+            fi = open(filename,'r')
             for line in fi:
-                i+=1
-                if is_header: pass
-                if '------' in line:
-                    is_numbered=True; is_header=False
-                    continue
-                if is_numbered and len(line)==1:
-                    is_numbered=False; is_unnumbered=True
-                    continue
-                if is_unnumbered and len(line)==1:
-                    is_unnumbered=False; is_1oposition=True
-                    continue
-                if is_numbered or is_unnumbered or is_1oposition:
-                    asts.append(get_astdata(line, source='MPCORB'))
+                if len(line) < 203: pass # Header and No content lines
+                #if is_numbered and len(line)==1:
+                #    is_numbered=False; is_unnumbered=True
+                #    continue
+                #if is_unnumbered and len(line)==1:
+                #    is_unnumbered=False; is_1oposition=True
+                #    continue
+                #if is_numbered or is_unnumbered or is_1oposition:
+                #    asts.append(get_astdata(line, source='MPCORB'))
+                asts.append(get_astdata(line, source='MPCORB'))
             fi.close()
                 
         elif self.service == 'Lowell':
             fi = open(filename,'r')
             asts = []
-            i = 0
             for line in fi: asts.append(get_astdata(line, source='astorb'))
             fi.close()
                     
