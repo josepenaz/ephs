@@ -1,6 +1,59 @@
 [build-system]
 requires = [
-    "setuptools>=42",
-    "wheel"
+    "setuptools>=61.0",
+    "wheel",
+    "cffi>=2.1.1"
 ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "astro-aleph"
+version = "0.5.0"
+description = "ALeRCE's Ephemeris"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Jose Pena Z.", email = "jpena@das.uchile.cl" }
+]
+dependencies = [
+    "numpy>=2.4.6",
+    "astropy>=8.0.1",
+    "pandas>=3.0.5",
+    "rebound>=5.1.1",
+    "jplephem>=2.24",
+    "cffi>=2.1.1"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/josepenaz/ephs"
+Issues = "https://github.com/josepenaz/ephs/issues"
+
+# --- setuptools: src-layout ---
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aleph*"]
+
+[tool.setuptools.package-data]
+aleph = ["*.h"]
+
+# --- cibuildwheel configuration ---
+[tool.cibuildwheel]
+build-verbosity = 1
+# Salta PyPy e implementaciones que no necesitas soportar (ajustar a gusto)
+skip = ["pp*", "*-musllinux*"]
+test-command = "python -c \"import aleph.pycutils; print('OK')\""
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64"]

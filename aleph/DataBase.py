@@ -1,15 +1,117 @@
-import urllib, gzip
-import os, time
+import urllib, gzip, shutil, os, time
+from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import urlretrieve
+from collections.abc import Callable
 import numpy as np
-from . import pycutils
+import pandas as pd
 from astropy.time import Time
-from astropy.coordinates import SkyCoord, get_body_barycentric, get_body_barycentric_posvel, solar_system_ephemeris, EarthLocation, GCRS
-import multiprocessing as mp
+from astropy.coordinates import solar_system_ephemeris
+from joblib import Parallel, delayed
 import sqlite3, warnings
 from .aleph_utils import *
-import pandas as pd
+from . import pycutils
 
-solar_system_ephemeris.set('de432s') 
+def unpack_mpc_epoch(packed_epoch):
+    S = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    y = int(str(S.find(packed_epoch[0]))+packed_epoch[1:3])
+    m = S.find(packed_epoch[3]); d = S.find(packed_epoch[4])
+    return '%04i-%02i-%02i' %(y, m, d)
+
+def unpack_lowell_epoch(packed_epoch):
+    y = packed_epoch[:4]; m = packed_epoch[4:6]; d = packed_epoch[6:]
+    return '%s-%s-%s' %(y, m, d)
+
+def _astdata_from_mpc_line(s):
+    readdes = s[166:194]
+    div = readdes.split(')')
+    name = div[-1].strip()
+    if len(div)==2: num = div[0].strip()[1:]
+    else: num = '-'
+    return {
+        'number':num, #unpack_number(s[:7])
+        'H':_getfl(s[8:13]), 
+        'G':_getfl(s[14:19]), 
+        'epoch':unpack_mpc_epoch(s[20:25]), 
+        'mean_anomaly':float(s[26:35]),
+        'argument_perihelion':float(s[37:46]), 
+        'longitude_ascending_node':float(s[48:57]), 
+        'inclination':float(s[59:68]), 
+        'eccentricity':float(s[70:79]), 
+        'mean_motion':float(s[80:91]), 
+        'semi_major_axis':float(s[92:103]),
+        'U':s[105:106], 
+        'ref':s[107:116], 
+        'Nobs':_getfl(s[117:122]), 
+        'Nops':float(s[123:126]), 
+        'arc':s[127:136], 
+        'rms':_getfl(s[137:141]), 
+        'perts1':s[142:145],
+        'perts2':s[146:149], 
+        'compnm':s[150:160], 
+        'flags':s[161:165], 
+        'name':name, 
+        'lastobs':s[194:202],
+        }
+           
+def _astdata_from_astorb_line(s):
+    return {
+        'number':s[:6].strip() if s[:6].strip()!='' else '-', 
+        'name':s[7:25].strip(), 
+        'compnm':s[26:41], 
+        'H':_getfl(s[42:47]), 
+        'G':_getfl(s[48:53]), 
+        'color_B_V':_getfl(s[54:58]),
+        'iras_diam_km':_getfl(s[59:64]), 
+        'iras_taxonomy':s[65:69], 
+        'code6':s[70:94], 
+        'arc_days':_getfl(s[95:100]),
+        'Nobs':_getfl(s[101:105]), 
+        'epoch':unpack_lowell_epoch(s[106:114]), 
+        'mean_anomaly':float(s[115:125]), 
+        'argument_perihelion':float(s[126:136]),
+        'longitude_ascending_node':float(s[137:147]), 
+        'inclination':float(s[147:157]), 
+        'eccentricity':float(s[158:168]), 
+        'semi_major_axis':float(s[168:181]), 
+        'compdate':s[182:190], 
+        'ceu_arcsec':s[191:198],
+        'ceurate_arcsecday':s[199:207], 
+        'ceudate':s[208:216], 
+        'peu_arcsec':s[217:224], 
+        'peudate':s[225:233], 
+        'peu_gratest_ceunext10yr':s[234:241],
+        'peudate_gratest_ceunext10yr':s[242:250], 
+        'peu_gratest_peunext10yr':s[251:258],
+        'peudate_gratest_peunext10yr':s[259:267],
+        'mean_motion':360.0/(365.2568984 * float(s[168:181])**1.5)
+        }
+
+def parse_mpc(filename):
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"'{filename}' not found.")
+    asts = []
+    #is_numbered=True; is_unnumbered=False; is_1oposition=False
+    in_header = True
+    with open(filename,'r') as fi:
+        for il, line in enumerate(fi):
+            line = line[:-1]
+            if set(line) == {'-'}:
+                in_header = False
+                continue
+            if in_header: continue # Header and No content lines
+            if len(line)==0: continue
+            asts.append(_astdata_from_mpc_line(line))
+    return pd.DataFrame(asts)
+
+def parse_lowell(filename):
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"'{filename}' not found.")
+    with open(filename,'r') as fi:
+        asts = [_astdata_from_astorb_line(line) for line in fi]
+    return pd.DataFrame(asts)
+
+solar_system_ephemeris.set('de430') 
 
 # https://stjarnhimlen.se/comp/ppcomp.html
 # https://ssd.jpl.nasa.gov/txt/aprx_pos_planets.pdf
@@ -26,228 +128,389 @@ def unpack_number(packed_num):
         else:
             num = str(S.find(packed_num[0])) + packed_num[1:]
         return int(num)
-def getfl(s):
+def _getfl(s):
     try: return float(s)
     except: return np.nan
-def get_astdata(s, source='MPCORB'):
-    if source=='MPCORB':
-        pack_num = s[:7]; H = s[8:13]; G = s[14:19]; epoch = s[20:25]; M = s[26:35]; peri = s[37:46]; node = s[48:57]
-        incl = s[59:68]; e = s[70:79]; n = s[80:91]; a = s[92:103]; U = s[105:106]; ref = s[107:116]; nobs = s[117:122]
-        nops = s[123:126]; arc = s[127:136]; rms = s[137:141]; perts1 = s[142:145]; perts2 = s[146:149]; compnm = s[150:160]
-        flags = s[161:165]; readdes = s[166:194]; lastobs = s[194:202]
-        div = readdes.split(')'); name = div[-1].strip()
-        if len(div)==2: num = div[0].strip()[1:]
-        else: num = '-'
-        dat = {'num':num, 'H':getfl(H), 'G':getfl(G), 'epoch':unpack_epoch(epoch,source), 'M_epoch':float(M),
-               'Arg_Peri':float(peri), 'Node':float(node), 'incl':float(incl), 'e':float(e), 'n':float(n), 'a':float(a),
-               'U':U, 'ref':ref, 'Nobs':getfl(nobs), 'Nops':float(nops), 'arc':arc, 'rms':getfl(rms), 'perts1':perts1,
-               'perts2':perts2, 'compnm':compnm, 'flags':flags, 'name':name, 'lastobs':lastobs}
-    if source=='astorb':
-        num = s[:6]; name = s[7:25]; compnm = s[26:41]; H = s[42:47]; G = s[48:53]; color_B_V = s[54:58]
-        iras_diam_km = s[59:64]; iras_taxonomy = s[65:69]; code6 = s[70:94]; arc_days = s[95:100]; nobs = s[101:105]
-        epoch = s[106:114]; M = s[115:125]; peri = s[126:136]; node = s[137:147]; incl = s[147:157]; e = s[158:168]
-        a = float(s[168:181]); compdate = s[182:190]; ceu_arcsec = s[191:198]; ceurate_arcsecday = s[199:207]
-        ceudate = s[208:216]; peu_arcsec = s[217:224]; peudate = s[225:233]; peu_gratest_ceunext10yr = s[234:241]
-        peudate_gratest_ceunext10yr = s[242:250]; peu_gratest_peunext10yr = s[251:258]; peudate_gratest_peunext10yr = s[259:267]
-        dat = {'num':num, 'name':name, 'compnm':compnm, 'H':getfl(H), 'G':getfl(G), 'color_B_V':getfl(color_B_V),
-               'iras_diam_km':getfl(iras_diam_km), 'iras_taxonomy':iras_taxonomy, 'code6':code6, 'arc_days':getfl(arc_days),
-               'Nobs':getfl(nobs), 'epoch':unpack_epoch(epoch,source), 'M_epoch':float(M), 'Arg_Peri':float(peri),
-               'Node':float(node), 'incl':float(incl), 'e':float(e), 'a':a, 'compdate':compdate, 'ceu_arcsec':ceu_arcsec,
-               'ceurate_arcsecday':ceurate_arcsecday, 'ceudate':ceudate, 'peu_gratest_ceunext10yr':peu_gratest_ceunext10yr,
-               'peudate_gratest_ceunext10yr':peudate_gratest_ceunext10yr, 'peu_gratest_peunext10yr':peu_gratest_peunext10yr,
-               'peudate_gratest_peunext10yr':peudate_gratest_peunext10yr}
-        P = 365.2568984 * a**1.5; dat['n'] = 360.0/P
-    return dat
-def unpack_epoch(packed_epoch, source='MPCORB'):
-    if source=='MPCORB':
-        S = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        y = int(str(S.find(packed_epoch[0]))+packed_epoch[1:3])
-        m = S.find(packed_epoch[3]); d = S.find(packed_epoch[4])
-        return '%04i-%02i-%02i' %(y, m, d)
-    if source=='astorb':
-        y = packed_epoch[:4]; m = packed_epoch[4:6]; d = packed_epoch[6:]
-        return '%s-%s-%s' %(y, m, d)
 
-def download_orbparams_catalogue(service, filename):
+def _download_mpc(filename):
     """
-    Donwloads the orbital parameter catalogue from the specified service.
-
-    Parameters:
-                service: Specifies origin of orbital parameters.
-                         Can be 'Lowell' or 'MPC'.
-                filename: Name of the saved file.
+    Download mpc orbital parameters catalogue from MPC.
     """
-    if service == 'MPC':
-        #url = "https://www.minorplanetcenter.org/iau/MPCORB/MPCORB.DAT"
-        url = 'https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT.gz'
-    elif service == 'Lowell':
-        #url = 'ftp://ftp.lowell.edu/pub/elgb/astorb.dat.gz'
-        ve = "Downloading 'astorb.dat' via FTP is not longer supported. "
-        ve+= "Download it yourself in https://asteroid.lowell.edu/main/astorb/ and"
-        ve+= "provide it via 'filename' parameter."
-        raise ValueError(ve)
-    else: raise ValueError("'service' must be 'Lowell' or 'MPC'")
-
+    url = 'https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT.gz'
+    filename = Path(filename)
+    folder = filename.parent
+    folder.mkdir(exist_ok=True)
+    
+    name_gz = Path(urlparse(url).path).name
+    file_gz = folder / name_gz
+    print(f"Downloading {file_gz}")
     response = urllib.request.urlopen(url)
-    fo = open(filename,'wb'); fo.write(gzip.decompress(response.read())); fo.close()
 
+    print(f"Uncompressing file into {filename}")
+    with open(filename, 'wb') as fo:
+        fo.write(gzip.decompress(response.read()))
+    
+def _download_lowell(filename):
+    """
+    Download lowell orbital parameters catalogue from Lowell.
+    """
+    url = "https://ftp.lowell.edu/pub/elgb/astorb.dat.gz"
+    filename = Path(filename)
+    folder = filename.parent
+    folder.mkdir(exist_ok=True)
 
-PACKAGE_PATH = os.path.abspath(os.path.dirname(__file__))
+    name_gz = Path(urlparse(url).path).name
+    file_gz = folder / name_gz
+
+    # Downloads .gz file
+    print(f"Downloading {file_gz}")
+    urlretrieve(url, file_gz)
+
+    # Uncompressing .gz file
+    print(f"Uncompressing file into {filename}")
+    with gzip.open(file_gz, "rb") as infile, open(filename, "wb") as outfile:
+        shutil.copyfileobj(infile, outfile)
+
+    print(f"Removing {file_gz}")
+    file_gz.unlink()
+
+PACKAGE_PATH = Path(os.path.abspath(os.path.dirname(__file__)))
+Parser = Callable[[str | Path], pd.DataFrame]
+PARSERS = {
+    "Lowell": parse_lowell,
+    "MPC": parse_mpc,
+}
+FILENAMES = {
+    "Lowell": 'astorb.dat',
+    "MPC": 'MPCORB.DAT',
+}
+DOWNLOADERS = {
+    "Lowell": _download_lowell,
+    "MPC": _download_mpc,
+}
+COMMON_COLUMNS = [
+    "number",
+    "name",
+    "epoch",
+    "mean_anomaly",
+    "argument_perihelion",
+    "longitude_ascending_node",
+    "inclination",
+    "eccentricity",
+    #"mean_motion",  # Se calcula a partir de la masa del Sol
+    "semi_major_axis",
+    "H",
+    "G",
+]
 
 class OrbParams:
-    def __init__ (self, service='MPC', update=False, **kwargs):
+    def __init__ (
+        self,
+        filename: str|Path|None = None,
+        parsing: str|Parser = 'MPC',
+        update: bool = False,
+        n_jobs: int = 1,
+        ):
         """
-        Reads an orbital parameter file for asteroids and computes ephemerides
+        Reads an orbital parameter file for asteroids and computes instantenous 
+        osculating orbital elements.
         
         Parameters:
-                    service: Sets origin of orbital parameters. Can be 'Lowell' or 'MPC'.
-                             Default to 'Lowell'.
-                    update: bool. If True, it downloads the orbital parameter's file
-                            from the appropiate servive and saves it in the package's
-                            directory. Default to False.
-        Other Parameters:
-                    filename: Str. Specifies file (and path) with orbital parameters to
-                              read. This file must be in Lowell's or MPC's format.
+            filename : str, default=None
+                Specifies file (and path) with orbital parameters to read.
+            parsing : str, default='MPC'
+                Sets parser to use. Can be 'MPC' or 'Lowell'.
+            update : bool, default=False
+                If True, it downloads the orbital parameter's file
+                from the appropiate service and saves it in the package's
+                directory.
+        
         Attributes:
-                    service: 'Lowell' or 'MPC'
-                    asts: List of dictionaries containing all asteroids' information.
-                    dicc_epochs_M: Dictionary with reference epochs of orbital parameters.
+            asts: List of dictionaries containing all asteroids' information.
+            dicc_epochs_M: Dictionary with reference epochs of orbital parameters.
+            ref_epoch: The most common reference epoch to build SQL database.
         """
-        self.service = service
-        if 'filename' in kwargs: self.filename = kwargs['filename']
+        available_parsers = ", ".join(PARSERS)
+        if isinstance(parsing, str):
+            if parsing not in PARSERS:
+                raise ValueError(f"Unknown parser: {parsing}. Available: {available_parsers}")
+            self.parser = PARSERS[parsing]
+            self.parser_name = parsing
+        elif callable(parsing):
+            self.parser = parsing
+            self.parser_name = parsing.__name__
         else:
-            if service=='Lowell': self.filename = PACKAGE_PATH + '/astorb.dat'
-            if service=='MPC': self.filename = PACKAGE_PATH + '/MPCORB.DAT'
+            raise TypeError("'parsing' must be a string or a 'Callable[[str | Path], pd.DataFrame]' object.")
+
+        downloader = None
+        if isinstance(filename, (str, Path)):
+            self.filename = Path(filename)
+            if not self.filename.exists():
+                raise FileNotFoundError(f"'{self.filename}' not found.")
+        elif isinstance(parsing, str):
+            self.filename = PACKAGE_PATH / FILENAMES[parsing]
+            downloader = DOWNLOADERS[parsing]
+        else:
+            raise ValueError("Filename must be provided when 'parsing' is a 'Callable' object.")
         
-        if update: self.update()
+        if not self.filename.exists() or update:
+            if downloader is None:
+                raise ValueError(f"If 'update' is True, 'parsing' must be a string in {available_parsers}")
+            downloader(self.filename)
         
-        self.asts = self.read(self.filename)
+        self.asts = self.parser(self.filename)
+        self._validate_common_schema()
         
         # Getting dicc of epochs
-        epochs_M = []
-        for ast in self.asts: epochs_M.append(ast['epoch'])
-        set_epoch_M = list(set(epochs_M)); epochs_M = Time(set_epoch_M, format='iso', scale='tt')
-        self.dicc_epochs_M = {t:Time(t, format='iso', scale='tt') for t in set_epoch_M}
-        
-    def update(self):
-        """
-        It downloads the orbital parameter's file from the appropiate servive.
-        """
-        print('UPDATING',self.filename)
-        download_orbparams_catalogue(self.service, self.filename)
-        print("UPDATE FINISHED!")
-                
-    def read(self, filename):
-        """
-        Reads orbital parameter file and saves its data as a dicctionary in a list.
-        """
-        if not os.path.exists(filename):
-            err = "Orbital parameter file not found. You need to run "
-            err+= "'DataBase.download_orbparams_catalogue(service, filename)' or initialize OrbParams with "
-            err+= "'update=True' or initialize OrbParams setting 'filename' with an orbital parameter "
-            err+= "file in a different directory."
-            raise ValueError(err)
-        if self.service == 'MPC':
-            asts = []
-            #is_numbered=True; is_unnumbered=False; is_1oposition=False
-            fi = open(filename,'r')
-            for line in fi:
-                if len(line) < 203: pass # Header and No content lines
-                #if is_numbered and len(line)==1:
-                #    is_numbered=False; is_unnumbered=True
-                #    continue
-                #if is_unnumbered and len(line)==1:
-                #    is_unnumbered=False; is_1oposition=True
-                #    continue
-                #if is_numbered or is_unnumbered or is_1oposition:
-                #    asts.append(get_astdata(line, source='MPCORB'))
-                asts.append(get_astdata(line, source='MPCORB'))
-            fi.close()
-                
-        elif self.service == 'Lowell':
-            fi = open(filename,'r')
-            asts = []
-            for line in fi: asts.append(get_astdata(line, source='astorb'))
-            fi.close()
-                    
-        else: raise ValueError("'service' must be 'Lowell' or 'MPC'")
-        
-        return asts
+        epochs_M = self.asts['epoch'].values
+        self.dicc_epochs_M = {t:Time(t, format='iso', scale='tt') for t in set(epochs_M)}
+        # Getting orbital parameters reference epoch (the most frequent one)
+        values, counts = np.unique(epochs_M, return_counts=True)
+        self.ref_epoch = values[counts.argmax()]
+
+        self.n_jobs = n_jobs
+        self._parallel = Parallel(n_jobs=n_jobs) if n_jobs > 1 else None
+
+    def _validate_common_schema(self):
+        missing = set(COMMON_COLUMNS) - set(self.asts.columns)
+        if missing:
+            raise ValueError(f"Missing columns: {sorted(missing)}")
+
+    def __str__(self):
+        msg = "OrbParams("
+        msg+= f"parser : '{self.parser_name}', "
+        msg+= f"number of bodies : {len(self.asts)}, "
+        msg+= f"reference epoch : {self.ref_epoch}"
+        msg+= ")"
+        return msg
+
+    def __repr__(self):
+        return f"{self.__str__()}"
     
-    def get_epoch_state(self, epoch_tdb_jd, ast_indexs=None, njobs=1):
+    def get_states_from_catalogue(
+        self, 
+        ast_names:list[float]|np.ndarray|None=None,
+        ):
         """
-        Returns states of asteroids at specified epoch in heliocentric equatorial coordinates.
+        Returns states of asteroids at their reference epochs in 
+        heliocentric equatorial coordinates.
         One state consists of a list containing positions and velocities: [x,y,z,vx,vy,z].
         
         Parameters:
-                    epoch_tdb_jd: float Epoch. Barycentric Dynamical Time in Julian Day format.
-                    ast_indexs: Index list of asteroids in AlerceEphs.asts to use.
-                                If not specified, states for all asteroids are calculated.
-                    njobs: int Number of parallel processes to run calculations. Default 1.
+            ast_names: list[str], default=None
+                Asteroids' names from Query.asts. If provided, ephemerides 
+                will be calculated only for those asteroids.
         """
-        if not isinstance(ast_indexs, (list,np.ndarray)): ast_indexs = np.arange(len(self.asts))
-        t = epoch_tdb_jd # calculated only once
-    
-        if njobs==1:
+        orb_param_cols = [
+            'semi_major_axis', 'eccentricity', 'inclination', 'longitude_ascending_node', 
+            'argument_perihelion', 'mean_anomaly'
+            ]
+        if ast_names is None:
+            orb_params = self.asts[orb_param_cols].values
+            orb_params_epochs = self.asts['epoch'].values
+            orb_params_names = self.asts['name'].to_numpy()
+        else:
+            orb_params = self.asts.set_index('name').loc[ast_names]
+            orb_params_epochs = orb_params['epoch'].values
+            orb_params = orb_params[orb_param_cols].values
+            orb_params_names = np.array(ast_names)
+            
+        if self._parallel is None:
             results = []
-            for idx in ast_indexs:
-                ast = self.asts[idx]
-                r = pycutils.state_equatorial_heliocentric(t, t, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch'])
+            for ast_idx, ast_params in enumerate(orb_params):
+                t = self.dicc_epochs_M[orb_params_epochs[ast_idx]].tdb.jd
+                r = pycutils.state_equatorial_heliocentric(t, t, *ast_params)
                 results.append(r)
         else:
-            pool = mp.Pool(processes=njobs)
             arguments = []
-            for idx in ast_indexs:
-                ast = self.asts[idx]
-                arguments.append((t, t, ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch']))
-            results = pool.starmap(pycutils.state_equatorial_heliocentric, arguments)
-            pool.close()
+            for ast_idx, ast_params in enumerate(orb_params):
+                t = self.dicc_epochs_M[orb_params_epochs[ast_idx]].tdb.jd
+                arguments.append((t, t, *ast_params))
+            results = self._parallel(
+                delayed(pycutils.state_equatorial_heliocentric)(*args)
+                for args in arguments
+            )
+        results = np.hstack([orb_params_names.reshape(-1,1), results])
+        
         return results
-    
-    def create_states_database(self, sqlfile=PACKAGE_PATH+'/aleph_states.db', ast_indexs=None, verbose=True): #, njobs=1
+
+    def get_params_at_ref_epoch(
+        self, 
+        ast_names:list[str]|np.ndarray|None=None, 
+        verbose:bool=False
+        ):
         """
-        Computes states of all Lowell's asteroids in an interval of 101 days around ASTORB
-        reference epoch with a time interval of 0.5 days and saves them in a SQL database.
-        Since orbital parameters in MPCORB.DAT can be at different epochs, this utility only
-        works with astorb.dat data.
+        Returns the equatorial heliocentric orbital parameters of all asteroids 
+        from the specified catalogue in the common reference epoch 
+        (attribute 'ref_epoch'). 
         
         Parameters:
-                    sqlfile: File name of SQL database. Default 'aleph_states.db'.
-                    ast_indexs: Index list of asteroids in AlerceEphs.asts to use.
-                                If not specified, states for all asteroids are calculated.
-                    verbose: bool If True, print messages indicating progress. Default True.
+            ast_names : list[str]|np.ndarray, default=None
+                Names of asteroids to calculate the orbital parameters. 
+                If None, the parameters of all asteroids in the catalogue 
+                are calculated.
+            verbose : bool, default=False
+                If True, print messages indicating progress.
+        """
+        # Catalogue's orbital parameters
+        orb_param_cols = [
+            'semi_major_axis', 'eccentricity', 'inclination', 'longitude_ascending_node', 
+            'argument_perihelion', 'mean_anomaly'
+            ]
+        if ast_names is None:
+            orb_params = self.asts[orb_param_cols].to_numpy().copy()
+            orb_params_epochs = self.asts['epoch'].to_numpy().copy()
+            orb_params_names = self.asts['name'].to_numpy().copy()
+        else:
+            orb_params = self.asts.set_index('name').loc[ast_names].copy()
+            orb_params_epochs = orb_params['epoch'].to_numpy().copy()
+            orb_params_names = orb_params.index.to_numpy().copy()
+            orb_params = orb_params[orb_param_cols].to_numpy().copy()
+        ref_epoch = self.dicc_epochs_M[self.ref_epoch]
+        ref_epoch = ref_epoch.tdb.jd
+
+        if verbose: 
+            task_str = '* Getting orbital parameters at reference epoch'
+            print(task_str, end='\r')
+        # Orbital parameters at catalogue reference epochs
+        ti = time.time()
+
+        # Moving orbital parameters to database reference epochs
+        for epoch in set(orb_params_epochs):
+            # Only bodies with other ref. epochs
+            if epoch == self.ref_epoch: continue
+            in_epoch = orb_params_epochs==epoch
+            
+            # Asteroids states at catalogue ref. epoch
+            params0 = orb_params[in_epoch]
+            t0 = Time(epoch, format='iso', scale='tt')
+            states0 = np.array([pycutils.state_equatorial_heliocentric(
+                t0.tdb.jd, t0.tdb.jd, *params) for params in params0])
+            
+            # SS states at catalogue ref. epoch
+            ss_states = get_SS_states(t0, frame='helio')
+            
+            # Asteroids states and params at database ref. epoch
+            delta_tdbs = ref_epoch - t0.tdb.jd; dt = 0.1 * np.sign(delta_tdbs)
+            states_ = get_integration(states0, ss_states, dt, [delta_tdbs])[delta_tdbs]
+            params_ = np.array([pycutils.orbparams_from_state(*state) for state in states_])
+            
+            # Savind states
+            orb_params[in_epoch] = params_
+
+        params = np.hstack([orb_params_names.reshape(-1,1), orb_params])
+        if verbose:
+            task_str = '* Getting orbital parameters at reference epoch'
+            T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60 
+            print(f'{task_str} (done in {h:02d}:{m:02d}:{s:05.2f})')
+        return params
+    
+    def create_sql_database(
+        self,
+        sqlfile: str|Path|None = None,
+        ast_names: list[str]|np.ndarray|None = None,
+        verbose: bool = True
+        ):
+        """
+        Creates an SQL database with the orbital parameters and states of 
+        all asteroids from the specified catalogue in a common reference epoch.
+        
+        Since Lowell's catalogue has one common epoch for all asteroids, 
+        this is the epoch used to initialize the SQL database. But MPC's
+        catalogue has multiple epochs for different asteroids, so the most common
+        epoch is used to initialize the SQL database (evolving the orbits to 
+        this reference epoch using n-body simulations).
+
+        This method creates the database with states and orbital parameters for
+        the reference epoch only. Adding more epochs (states and orbital
+        parameters) is possible using function 'adding_epochs_into_db'
 
         The SQL database contains the following tables:
 
-         * 'asts_info'   : Contains asteroids' information. Columns: 'name', 'number', 'H', 'G'.
-         * 'param_T0'    : Contains the orbital parameters of all asteroids as given in 
-                           astorb.dat in columns 'name', 'a', 'e', 'i', 'longnode',
-                           'argperi' and 'meananom' (heliocentric ecliptic coordinates).
-         * 'param_TXXXX' : Same as 'param_T0', but with values in other epochs.
-                           Only available after using function 'adding_params_into_db'.
-         * 'param_times' : Contains columns 'table_title' (names with tables of states) and
-                           'time' with the corresponding tdb time for those states.
-         * 'state_T0'    : Contains the states of every asteroid in the astorb's epoch of 
-                           osculation (common for all asteroids) in the columns 'name', 'x',
-                           'y', 'z', 'vx', 'vy' and 'vz' (heliocentric equatorial coordinates).
-         * 'state_TXXXX' : Same as 'state_T0', but with values in other epochs.
-                           Only available after using function 'adding_states_into_db'.
-         * 'state_times' : Contains columns 'table_title' (names with tables of states) and
-                           'time' with the corresponding tdb time for those states.
+        * 'asts_info'   : Contains asteroids' information that does not change over time. 
+                          Columns: 'name', 'number', 'H', 'G'.
+        * 'param_T0'    : Contains the orbital parameters of all asteroids 
+                          as given in the source catalogue (Lowell's or MPC's).
+                          Columns: 'name', 'a', 'e', 'i', 'longnode','argperi' 
+                          and 'meananom' (heliocentric ecliptic coordinates).
+        * 'param_TXXXX' : Same as 'param_T0', but with values in other epochs.
+                          Only available after using function 'adding_epochs_into_db'.
+        * 'param_times' : Summary table with all tables of orbital parameters
+                          stored in the database.
+                          Columns: 'table_title' (names of tables) and 'time' 
+                          (the corresponding tdb time of those orbital 
+                          parameters).
+        * 'state_T0'    : Contains the states of all asteroids as given in the 
+                          source catalogue (Lowell's or MPC's).
+                          Columns: 'name', 'x', 'y', 'z', 'vx', 'vy' and 'vz' 
+                          (heliocentric equatorial coordinates).
+        * 'state_TXXXX' : Same as 'state_T0', but with values in other epochs.
+                          Only available after using function 'adding_epochs_into_db'.
+        * 'state_times' : Summary table with all tables of states stored in the 
+                          database. 
+                          Columns: 'table_title' (names of tables) and 'time' 
+                          (the corresponding tdb time for those states).
+
+        Parameters:
+            sqlfile : str, default=None
+                File name of SQL database. If None, it will create a new database
+                with the name 'aleph_states.db' in the package directory.
+            ast_names: list[str]|np.ndarray, default=None
+                Names list of asteroids in AlerceEphs.asts to use.
+                If not specified, states for all asteroids are calculated.
+            verbose: bool, default=True
+                If True, print messages indicating progress. 
         """
-#                    njobs: int Number of parallel processes to run calculations. Default 1.
-        if not isinstance(ast_indexs, (list,np.ndarray)): ast_indexs = np.arange(len(self.asts))
-        epoch = Time(self.asts[0]['epoch'], format='iso', scale='tt')
-        #t = np.round(epoch.tdb.jd,decimals=2) # calculated only once
+        # Setting arguments
+        if sqlfile is None: 
+            sqlfile = PACKAGE_PATH / 'aleph_states.db'
+        else:
+            sqlfile = Path(sqlfile)
+        # Catalogue's orbital parameters
+        orb_param_cols = [
+            'semi_major_axis', 'eccentricity', 'inclination', 'longitude_ascending_node', 
+            'argument_perihelion', 'mean_anomaly'
+            ]
+        if ast_names is None:
+            orb_params = self.asts[orb_param_cols].to_numpy().copy()
+            ast_names = self.asts['name'].to_numpy().copy()
+            orb_params_info = self.asts[['number', 'H', 'G']].to_numpy().copy()
+        else:
+            orb_params = self.asts.set_index('name').loc[ast_names].copy()
+            orb_params_info = orb_params[['number', 'H', 'G']].to_numpy().copy()
+            orb_params = orb_params[orb_param_cols].to_numpy().copy()
+        ref_epoch = self.dicc_epochs_M[self.ref_epoch]
+        ref_epoch = ref_epoch.tdb.jd
+        
+        # Reference epoch
+        epoch = self.dicc_epochs_M[self.ref_epoch]
         t0 = epoch.tdb.jd
+
+        # Orbital parameters at reference epoch
+        params = self.get_params_at_ref_epoch(ast_names=ast_names, verbose=verbose)
+
+        # States at reference epoch
+        if verbose: 
+            print('* Calculating positions at reference epoch', end='\r')
+        ti = time.time()
+        states0 = np.array([pycutils.state_equatorial_heliocentric(
+            t0, t0, *params_[1:]) for params_ in params])
+        if verbose: 
+            T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
+            verb_str = '* Calculating positions at reference epoch'
+            print(f"{verb_str} (done in {h:02d} : {m:02d} : {s:05.2f})")
+            #print('  Done in Time: %02i : %02i : %05.2f' %(h,m,s))
         
         # Creating SQL DB
-        #if verbose: print('* Creating SQL Database')
-        pkey = [[self.asts[i]['name'].strip()] for i in ast_indexs]
-        info = [[self.asts[i]['num'], self.asts[i]['H'], self.asts[i]['G']] for i in ast_indexs]
+        pkey = np.array(ast_names).reshape(-1,1) #[[self.asts[i]['name'].strip()] for i in ast_indexs]
+        info = orb_params_info #[[self.asts[i]['number'], self.asts[i]['H'], self.asts[i]['G']] for i in ast_indexs]
         
         ## Starting database
-        os.system('rm %s' %sqlfile) # Database is constructed again
+        if verbose: 
+            print('* Creating SQL Database')
+            print('  * Creating informative tables', end='\r')
+            ti = time.time()
+        sqlfile.unlink(missing_ok=True) # Database is constructed again
         conn = sqlite3.connect(sqlfile)
         ## Create param_times table
         conn.execute("CREATE TABLE param_times(table_title, time)")
@@ -256,16 +519,15 @@ class OrbParams:
         ## Create and fill asts_info table
         conn.execute("CREATE TABLE asts_info(name TEXT, number TEXT, H REAL, G REAL, PRIMARY KEY(name))")
         conn.executemany("INSERT INTO asts_info (name, number, H, G) VALUES (?,?,?,?)", np.hstack((pkey, info)) )
+        if verbose:
+            T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
+            verb_str = '  * Creating informative tables'
+            print(f"{verb_str} (done in {h:02d} : {m:02d} : {s:05.2f})")
 
-        # Orbital parameters at reference epoch
-        if verbose: print('* Saving orbital parameters at reference epoch')
-        ti = time.time()
-        params = []
-        for idx in ast_indexs:
-            ast = self.asts[idx]
-            params.append([ast['name'].strip(),ast['a'],ast['e'],ast['incl'],ast['Node'],ast['Arg_Peri'],ast['M_epoch']])
-        #params = np.array(params, dtype=str)
         ### Create state table
+        if verbose: 
+            print('  * Creating table with orbital parameters at reference epoch', end='\r')
+            ti = time.time()
         table_name = "param_T0"
         conn.execute("CREATE TABLE param_T0(name TEXT,a REAL,e REAL,i REAL,longnode REAL,argperi REAL,meananom REAL, PRIMARY KEY(name))")
         ### Fill times table
@@ -273,19 +535,15 @@ class OrbParams:
         ### Fill state table
         conn.executemany("INSERT INTO param_T0(name,a,e,i,longnode,argperi,meananom) VALUES (?,?,?,?,?,?,?)", params)
         del params
-        T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
-        if verbose: print('  Done in Time: %02i : %02i : %05.2f' %(h,m,s))
-    
-        # Positions at reference epoch
-        if verbose: print('* Calculating positions at reference epoch')
-        ti = time.time()
-        states0 = self.get_epoch_state(t0, ast_indexs=ast_indexs)#, njobs=njobs)
-        T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
-        print('  Done in Time: %02i : %02i : %05.2f' %(h,m,s))
+        if verbose: 
+            T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
+            verb_str = '  * Creating table with orbital parameters at reference epoch'
+            print(f"{verb_str} (done in {h:02d} : {m:02d} : {s:05.2f})")
         
         ## Reference epoch
-        if verbose: print('* Saving states at reference epoch')
-        ti = time.time()
+        if verbose: 
+            print('  * Creating table with states at reference epoch', end='\r')
+            ti = time.time()
         ### Create state table
         table_name = "state_T0"
         conn.execute("CREATE TABLE state_T0(name TEXT, x REAL,y REAL,z REAL,vx REAL,vy REAL,vz REAL, PRIMARY KEY(name))")
@@ -293,14 +551,23 @@ class OrbParams:
         conn.execute("INSERT INTO state_times(table_title, time) VALUES (?, ?)", (table_name,t0))
         ### Fill state table
         conn.executemany("INSERT INTO state_T0(name,x,y,z,vx,vy,vz) VALUES (?,?,?,?,?,?,?)", np.hstack((pkey, states0)))
-        T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
-        if verbose: print('  Done in Time: %02i : %02i : %05.2f' %(h,m,s))
+        if verbose: 
+            T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
+            verb_str = '  * Creating table with states at reference epoch'
+            print(f"{verb_str} (done in {h:02d} : {m:02d} : {s:05.2f})")
 
         # Closing db
+        if verbose: 
+            print('* Saving changes in SQL database', end='\r')
+            ti = time.time()
         conn.commit()
         conn.close()
+        if verbose: 
+            T = time.time()-ti; h=int(T/3600); rest=T%3600; m = int(rest/60); s=rest%60
+            verb_str = '* Saving changes in SQL database'
+            print(f"{verb_str} (done in {h:02d} : {m:02d} : {s:05.2f})")
 
-    def dbconn(self, sqlfile=PACKAGE_PATH+'/aleph_states.db'):
+    def dbconn(self, sqlfile=PACKAGE_PATH/'aleph_states.db'):
         """
         Returns an SQL connection (sqlite3.connect) to the database 
         (see 'sqlite3' documentation for all options). Remember to
@@ -308,8 +575,14 @@ class OrbParams:
         function.
         """
         return sqlite3.connect(sqlfile)
-        
-    def adding_states_into_db (self, tdb_jds, sqlfile=PACKAGE_PATH+'/aleph_states.db', njobs=1, onebodysim=True, verbose=True):
+
+    def adding_epochs_into_db (
+        self, 
+        epochs: float|list[float]|np.ndarray|Time, 
+        sqlfile: str|Path|None = None,
+        onebodysim: bool = True, 
+        verbose: bool = True
+        ):
         """
         Integrates states of all bodies in 'sqlfile' in the given 'tdb_jds' epochs
         starting from the states already stored in the database.
@@ -319,13 +592,19 @@ class OrbParams:
         from the states at a near time stored in the database ('sqlfile' parameter).
         
         Parameters:
-                    tdb_jds: Array with the requested epochs in JD format and TDB scale.
-                    sqlfile: File name of SQL database. Default 'aleph_states.db'.
-                    njobs: int Number of parallel processes to run calculations. Default 1.
-                    verbose: bool. If True, print messages indicating progress. Default True.
-                    onebodysim: bool. If True, each `rebound.Simulation` receives only one asteroid.
-                                If False, each `rebound.Simulation` receives several asteroids
-                                (determined by 'njobs').
+            epochs : list[float]|np.ndarray
+                Epoch or array of epochs to integrate orbits. If float or numpy array,
+                the epochs must be in JD format and TDB scale. If astropy.Time object,
+                the epochs are moved to TDB scale from the original scale.
+            sqlfile: PathLike, default=None
+                File name of SQL database. If not provided, it uses the default database
+                created in the package directory.
+            verbose: bool, default=True
+                If True, print messages indicating progress.
+            onebodysim: bool, default=True
+                If True, each `rebound.Simulation` receives only one asteroid.
+                If False, each `rebound.Simulation` receives several asteroids
+                (determined by the attribute 'n_jobs').
         
         Setting 'onebodysim=True' occupies much more memory (required for all the planets in each
         simulation) but the simulations can run much faster. Setting 'onebodysim=False' saves much
@@ -338,6 +617,17 @@ class OrbParams:
         for one state of all asteroids (without taking into account the Sun and Planets' states)
         before you decide wether to set 'onebodysim' to True.
         """
+        # Setting arguments
+        if isinstance(epochs, Time):
+            tdb_jds = epochs.tdb.jd
+        else:
+            tdb_jds = epochs
+        if isinstance(tdb_jds, float):
+            tdb_jds = [tdb_jds]
+        if sqlfile is None: 
+            sqlfile = PACKAGE_PATH / 'aleph_states.db'
+        else:
+            sqlfile = Path(sqlfile)
         # Opening SQL DB
         if verbose: print('* Opening SQL Database')
         conn = sqlite3.connect(sqlfile)
@@ -368,20 +658,28 @@ class OrbParams:
         c.execute("SELECT table_title FROM state_times WHERE time=?", (t_start,))
         (table,) = c.fetchone()
         df = pd.read_sql('SELECT * FROM %s' %table, conn, index_col='name')
-        pkey = np.reshape(df.index.values, (len(df),1))
-        states0 = df.values
+        pkey = df.index.to_numpy().reshape(-1,1)
+        states0 = df.to_numpy()
         ss_states = get_SS_states(Time(t_start, format='jd', scale='tdb'), frame='helio')
-
+        
         # Integrating from starting states to requested times
         if dt>0: delta_tdbs = np.array(sorted(t_add)) - t_start
         else: delta_tdbs = np.array(sorted(t_add, reverse=True)) - t_start
-        if njobs == 1:
+
+        # Creating mapping dictionaries
+        lt = len(ts_db)+1
+        state_table_names = {it:"state_T%04i" %(j+lt) for j, it in enumerate(delta_tdbs)}
+        param_table_names = {it:"param_T%04i" %(j+lt) for j, it in enumerate(delta_tdbs)}
+        
+        # Integrating from starting states to requested times
+        if self._parallel is None:
             if verbose: print('* Integrating (can take several hours)')
             ti_ = time.time()
             if onebodysim:
                 results = []
                 for i in range(len(pkey)):
-                    results.append(get_integration([states0[i]], ss_states, dt, delta_tdbs))
+                    states0_i = np.array([states0[i]])
+                    results.append(get_integration(states0_i, ss_states, dt, delta_tdbs))
                 T = time.time()-ti_; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
                 if verbose: print('    Done in Time: %02i : %02i : %05.2f' %(h_,m_,s_))
                 if verbose: print('*   Joining results')
@@ -398,23 +696,23 @@ class OrbParams:
         else:
             if verbose: print('* Integrating in parallel (can take several hours)')
             ti_ = time.time()
-            l = len(pkey); intervalo=l*1./njobs
+            l = len(pkey); intervalo=l*1./self.n_jobs
             argums = []
+            for i in range(self.n_jobs):
+                i_0 = int(i*intervalo); i_f = int((i+1)*intervalo)
+                if i==self.n_jobs-1: i_f = l
+                argums.append((states0[i_0:i_f], ss_states, dt, delta_tdbs))
+        
             if onebodysim:
-                for i in range(l):
-                    argums.append(([states0[i]], ss_states, dt, delta_tdbs))
+                results = self._parallel(
+                    delayed(get_multi_single_integrations)(*args)
+                    for args in argums
+                )
             else:
-                for i in range(njobs):
-                    i_0 = int(i*intervalo); i_f = int((i+1)*intervalo)
-                    if i==njobs-1: i_f = l
-                    argums.append((states0[i_0:i_f], ss_states, dt, delta_tdbs))
-            pool = mp.Pool(processes=njobs)
-            ##results = [pool.apply(get_integration, args=arg) for arg in argums]
-            ##res_raw = []
-            ##for p in results:
-            ##    r = p.get(); res_raw.append(r)
-            results = pool.starmap(get_integration, argums)
-            pool.close()
+                results = self._parallel(
+                    delayed(get_integration)(*args)
+                    for args in argums
+                )
             T = time.time()-ti_; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
             if verbose: print('    Done in Time: %02i : %02i : %05.2f' %(h_,m_,s_))
             if verbose: print('*   Joining parallel results')
@@ -425,13 +723,14 @@ class OrbParams:
                 dicc_integ[dt] = np.vstack(sts)
             T = time.time()-ti_; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
             if verbose: print('        Done in Time: %02i : %02i : %05.2f' %(h_,m_,s_))
-    
+
         # Saving Integration
         if verbose: print('* Saving states')
-        ti_ = time.time()
+        ti = time.time()
         lt = len(ts_db)+1
         for j, it in enumerate(delta_tdbs):
-            tdbs = t_start+it; table_name = "state_T%04i" %(j+lt)
+            tdbs = t_start+it
+            table_name = state_table_names[it]
             #if verbose: print('        ', j+lt, it, table_name, tdbs)
             data = np.hstack((pkey, dicc_integ[it]))
             ## Fill times table
@@ -440,7 +739,28 @@ class OrbParams:
             conn.execute("create table %s(name TEXT, x REAL,y REAL,z REAL,vx REAL,vy REAL,vz REAL, primary key(name))" %table_name)
             ## Fill state table
             conn.executemany("insert into "+table_name+"(name, x,y,z,vx,vy,vz) values (?,?,?,?,?,?,?)", data)
-        T = time.time()-ti_; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
+        
+        # Calculating orbital parameters
+        for it in dicc_integ:
+            tdbs = t_start+it
+            table_name = param_table_names[it]
+            epoch_states = dicc_integ[it]
+            epoch_params = [pycutils.orbparams_from_state(*state) for state in epoch_states]
+
+            # Saving orbital parameters
+            if verbose: print(f'    Saving orbital parameters for epoch = {tdbs}')
+            ti_ = time.time()
+            ## Fill times table
+            conn.execute("INSERT INTO param_times(table_title, time) VALUES (?, ?)", (table_name,tdbs))
+            ## Create state table
+            data = np.hstack((pkey, epoch_params))
+            conn.execute("create table %s(name TEXT,a REAL,e REAL,i REAL,longnode REAL,argperi REAL,meananom REAL, PRIMARY KEY(name))" %table_name)
+            ## Fill state table
+            conn.executemany("insert into "+table_name+"(name,a,e,i,longnode,argperi,meananom) values (?,?,?,?,?,?,?)", data)
+            T = time.time()-ti_#; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
+            if verbose: print('       Done in %05.2f s' %(T))
+        
+        T = time.time()-ti; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
         if verbose: print('    Done in Time: %02i : %02i : %05.2f' %(h_,m_,s_))
         del dicc_integ; del data
 
@@ -448,84 +768,7 @@ class OrbParams:
         conn.commit()
         conn.close()
 
-    def adding_params_into_db (self, tdb_jds=None, sqlfile=PACKAGE_PATH+'/aleph_states.db', verbose=True):
-        """
-        Function that receives epochs with states already stored in the database and computes their
-        corresponding orbital parameters (using the 2-body equations). Take into considerations that
-        the states are computed in the heliocentric equatorial frame while the orbital parameters
-        are in the heliocentric ecliptic frame (as those in astorb.dat or MPCORB.DAT).
-        
-        Parameters:
-                    tdb_jds: Array with the requested epochs in JD format and TDB scale.
-                             These epochs must have stored states. Default to None (meaning that
-                             orbital parameters will be computed for states at all apochs).
-                    sqlfile: File name of SQL database. Optional.
-                    verbose: bool. If True, print messages indicating progress. Default True.
-        """
-        ttotal_ = time.time()
-        # Opening SQL DB
-        if verbose: print('* Opening SQL Database')
-        conn = sqlite3.connect(sqlfile)
-        c = conn.cursor()
-
-        c.execute("SELECT time FROM state_times")
-        ts_db = np.array(c.fetchall()).ravel()
-        
-        if tdb_jds is None: tdb_jds = ts_db
-        
-        # Checking validity of times
-        t_intersec = set(tdb_jds)&set(ts_db)
-        if len(t_intersec)==0:
-            warnings.warn("None of the requested epochs have states calculated. Ending task.")
-            return
-        c.execute("SELECT time FROM param_times")
-        ts_db = np.array(c.fetchall()).ravel()
-        t_add = list(set(tdb_jds)-set(ts_db))
-        if len(t_add)==0: 
-            warnings.warn("All requested epochs have orbital parameters calculated. Ending task.")
-            return
-
-        # Iterating for each epoch
-        for t in t_add:
-            # Computing orbital parameters
-            if verbose: print('    Calculating orbital parameters for epoch =',t)
-            ti_ = time.time()
-            c.execute("SELECT table_title FROM state_times WHERE time=?", (t,))
-            (table,) = c.fetchone()
-            
-            df = pd.read_sql('SELECT * FROM %s' %table, conn, index_col='name')
-            pkey = np.reshape(df.index.values, (len(df),1))
-            states = df.values
-            
-            params = []
-            for state in states: params.append( pycutils.orbparams_from_state(*state) )
-            T = time.time()-ti_#; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
-            if verbose: print('       Done in %05.2f s' %(T))
-            
-            # Saving orbital parameters
-            if verbose: print('    Saving orbital parameters for epoch =',t)
-            ti_ = time.time()
-            ## Getting table name
-            table_name = 'param_'+table.split('_')[1]
-            ## Fill times table
-            conn.execute("INSERT INTO param_times(table_title, time) VALUES (?, ?)", (table_name,t))
-            ## Create state table
-            data = np.hstack((pkey, params))
-            conn.execute("create table %s(name TEXT,a REAL,e REAL,i REAL,longnode REAL,argperi REAL,meananom REAL, PRIMARY KEY(name))" %table_name)
-            ## Fill state table
-            conn.executemany("insert into "+table_name+"(name,a,e,i,longnode,argperi,meananom) values (?,?,?,?,?,?,?)", data)
-            for state in states: params.append( pycutils.orbparams_from_state(*state) )
-            T = time.time()-ti_#; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
-            if verbose: print('       Done in %05.2f s' %(T))
-
-        # Closing db
-        conn.commit()
-        conn.close()
-
-        T = time.time()-ttotal_; h_=int(T/3600); rest=T%3600; m_ = int(rest/60); s_=rest%60
-        if verbose: print('    Done in Time: %02i : %02i : %05.2f' %(h_,m_,s_))
-
-    def get_available_db_times(self, sqlfile=PACKAGE_PATH+'/aleph_states.db'):
+    def get_available_db_times(self, sqlfile=PACKAGE_PATH/'aleph_states.db'):
         """
         Returns an `astropy.time.Time` object with all available times stored in the database. 
         """

@@ -1,68 +1,90 @@
-import ctypes
-import os
-
-# Find .so full suffix
-import sysconfig
-suffix = sysconfig.get_config_var('EXT_SUFFIX')
-if suffix is None:
-    suffix = ".so"
+from ._cutils import ffi, lib
 
 
-PACKAGE_PATH = os.path.abspath(os.path.dirname(__file__))
-
-cutils = ctypes.CDLL(PACKAGE_PATH+"/../cutils"+suffix)
-
-cutils.state_equatorial_heliocentric.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                                                 ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                                                 ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-                                                 ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double))
-
-cutils.apparent_coords_equatorial_heliocentric.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                                                           ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                                                           ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                                                           ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-                                                           ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-                                                           ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double))
-
-cutils.params_from_state.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                                     ctypes.c_double, ctypes.c_double, ctypes.c_double,
-                                     ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-                                     ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double))
-
-def state_equatorial_heliocentric(epoch, paramsepoch, a, e, i, longnode, argperi, meananom):
+def state_equatorial_heliocentric(
+    epoch:float,
+    paramsepoch:float,
+    a:float,
+    e:float,
+    i:float,
+    longnode:float,
+    argperi:float,
+    meananom:float,
+) -> tuple[float, float, float, float, float, float]:
     """
     Given an epoch and orbital parameters (in heliocentric ecliptic coordinates)
     returns the state (in heliocentric equatorial coordinates).
 
     Parameters:
-               epoch : float. Epoch where the state is calculated (in days).
-               paramsepoch: float. Epoch of the orbital parameters (in days).
-               a : float. Semi-major axis (in au).
-               e : float. Eccentricity.
-               i : float. Inclination (in degrees).
-               longnode: float. Longitude of ascending node (in degrees).
-               argperi: float. Argument of perihelion (in degrees).
-               meananom: floaf. Mean anomaly (at pamsepoch, in degrees).
+        epoch : float
+            Epoch where the state is calculated (in days).
+        paramsepoch: float
+            Epoch of the orbital parameters (in days).
+        a : float
+            Semi-major axis (in au).
+        e : float
+            Eccentricity.
+        i : float
+            Inclination (in degrees).
+        longnode: float
+            Longitude of ascending node (in degrees).
+        argperi: float
+            Argument of perihelion (in degrees).
+        meananom: float
+            Mean anomaly (at paramsepoch, in degrees).
     
-    Returns: tuple of floats: x, y, z, vx, vy, vz. State in au and au/day
+    Returns: 
+        tuple[float]: 
+            - (x, y, z): Position in au
+            - (vx, vy, vz): Velocity in au/day
     """
-    jd_ = ctypes.c_double(epoch); tjdepoch_ = ctypes.c_double(paramsepoch)
-    
-    a_ = ctypes.c_double(a); e_ = ctypes.c_double(e); i_ = ctypes.c_double(i)
-    longnode_ = ctypes.c_double(longnode)
-    argperi_ = ctypes.c_double(argperi)
-    meananom_ = ctypes.c_double(meananom)
+    x = ffi.new("double *")
+    y = ffi.new("double *")
+    z = ffi.new("double *")
+    vx = ffi.new("double *")
+    vy = ffi.new("double *")
+    vz = ffi.new("double *")
 
-    x = ctypes.c_double(0); y = ctypes.c_double(0); z = ctypes.c_double(0)
-    vx = ctypes.c_double(0); vy = ctypes.c_double(0); vz = ctypes.c_double(0)
-    
-    args = (jd_, tjdepoch_, a_, e_, i_, longnode_, argperi_, meananom_,
-            x, y, z, vx, vy, vz)
+    lib.state_equatorial_heliocentric(
+        epoch,
+        paramsepoch,
+        a,
+        e,
+        i,
+        longnode,
+        argperi,
+        meananom,
+        x,
+        y,
+        z,
+        vx,
+        vy,
+        vz,
+    )
 
-    cutils.state_equatorial_heliocentric(*args)
-    return x.value, y.value, z.value, vx.value, vy.value, vz.value
+    return (
+        x[0],
+        y[0],
+        z[0],
+        vx[0],
+        vy[0],
+        vz[0],
+    )
 
-def apparent_coords_equatorial_heliocentric(epoch, obsx, obsy, obsz, paramsepoch, a, e, i, longnode, argperi, meananom):
+
+def apparent_coords_equatorial_heliocentric(
+    epoch:float,
+    obsx:float,
+    obsy:float,
+    obsz:float,
+    paramsepoch:float,
+    a:float,
+    e:float,
+    i:float,
+    longnode:float,
+    argperi:float,
+    meananom:float,
+) -> tuple[float, float, float, float, float, float, float, float, float]:
     """
     Given an epoch, orbital parameters (in heliocentric ecliptic coordinates)
     and observer's coordinates (in heliocentric equatorial coordinates)
@@ -70,78 +92,147 @@ def apparent_coords_equatorial_heliocentric(epoch, obsx, obsy, obsz, paramsepoch
     light-travel time) coordinates, state and distance.
 
     Parameters:
-               epoch : float. Epoch where the state is calculated (in days).
-               obsx : float. Observer's 'x' coordinate (in au).
-               obsy : float. Observer's 'y' coordinate (in au).
-               obsz : float. Observer's 'z' coordinate (in au).
-               paramsepoch: float. Epoch of the orbital parameters (in days).
-               a : float. Semi-major axis (in au).
-               e : float. Eccentricity.
-               i : float. Inclination (in degrees).
-               longnode: float. Longitude of ascending node (in degrees).
-               argperi: float. Argument of perihelion (in degrees).
-               meananom: floaf. Mean anomaly (at pamsepoch, in degrees).
+        epoch : float
+            Epoch where the state is calculated (in days).
+        obsx : float
+            Observer's 'x' coordinate (in au).
+        obsy : float
+            Observer's 'y' coordinate (in au).
+        obsz : float
+            Observer's 'z' coordinate (in au).
+        paramsepoch: float
+            Epoch of the orbital parameters (in days).
+        a : float
+            Semi-major axis (in au).
+        e : float
+            Eccentricity.
+        i : float
+            Inclination (in degrees).
+        longnode: float
+            Longitude of ascending node (in degrees).
+        argperi: float
+            Argument of perihelion (in degrees).
+        meananom: float
+            Mean anomaly (at pamsepoch, in degrees).
     
-    Returns: tuple of floats: ra, dec, x, y, z, vx, vy, vz, dist.
-             ra, dec : Equatorial coordinates of body as seen by the observer.
-             x, y, z, vx, vy, vz : Heliocentric state of body in au and au/day
-                                   when observed light was emited.
-             dist : Apparent distance observer-body in au. 
-                    Equivalent to sqrt(x*x+y*y+z*z). 
+    Returns:
+        tuple[float]:
+            - (ra, dec): Equatorial coordinates of body as seen by the observer.
+            - (x, y, z): Heliocentric state of body in au when observed light was emited.
+            - (vx, vy, vz): Heliocentric velocity of body in au/day when observed light was emited.
+            - dist : Apparent distance observer-body in au.
     """
-    jd_ = ctypes.c_double(epoch); tjdepoch_ = ctypes.c_double(paramsepoch)
-    
-    xobs = ctypes.c_double(obsx)
-    yobs = ctypes.c_double(obsy); zobs = ctypes.c_double(obsz)
-    
-    a_ = ctypes.c_double(a); e_ = ctypes.c_double(e); i_ = ctypes.c_double(i)
-    longnode_ = ctypes.c_double(longnode)
-    argperi_ = ctypes.c_double(argperi)
-    meananom_ = ctypes.c_double(meananom)
+    ra = ffi.new("double *")
+    dec = ffi.new("double *")
+    x = ffi.new("double *")
+    y = ffi.new("double *")
+    z = ffi.new("double *")
+    vx = ffi.new("double *")
+    vy = ffi.new("double *")
+    vz = ffi.new("double *")
+    gdist = ffi.new("double *")
 
-    ra = ctypes.c_double(0); dec = ctypes.c_double(0)
-    x = ctypes.c_double(0); y = ctypes.c_double(0); z = ctypes.c_double(0)
-    vx = ctypes.c_double(0); vy = ctypes.c_double(0); vz = ctypes.c_double(0)
-    gdist = ctypes.c_double(0)
-    
-    args = (jd_, xobs, yobs, zobs, tjdepoch_, a_, e_, i_, longnode_, argperi_, meananom_,
-            ra, dec, x, y, z, vx, vy, vz, gdist)
+    lib.apparent_coords_equatorial_heliocentric(
+        epoch,
+        obsx,
+        obsy,
+        obsz,
+        paramsepoch,
+        a,
+        e,
+        i,
+        longnode,
+        argperi,
+        meananom,
+        ra,
+        dec,
+        x,
+        y,
+        z,
+        vx,
+        vy,
+        vz,
+        gdist,
+    )
 
-    cutils.apparent_coords_equatorial_heliocentric(*args)
-    return ra.value, dec.value, x.value, y.value, z.value, vx.value, vy.value, vz.value, gdist.value
+    return (
+        ra[0],
+        dec[0],
+        x[0],
+        y[0],
+        z[0],
+        vx[0],
+        vy[0],
+        vz[0],
+        gdist[0],
+    )
 
-def orbparams_from_state(x, y, z, vx, vy, vz):
+
+def orbparams_from_state(
+    x: float,
+    y: float,
+    z: float,
+    vx: float,
+    vy: float,
+    vz: float,
+) -> tuple[float, float, float, float, float, float]:
     """
     Given a body's state (in heliocentric equatorial coordinates), returns 
     orbital parameters (in heliocentric ecliptic coordinates).
 
     Parameters:
-               x : float. Body's 'x' coordinate (in au).
-               y : float. Body's 'y' coordinate (in au).
-               z : float. Body's 'z' coordinate (in au).
-               vx : float. Body's 'vx' velocity component (in au/day).
-               vy : float. Body's 'vy' velocity component (in au/day).
-               vz : float. Body's 'vz' velocity component (in au/day).
+        x : float
+            Body's 'x' coordinate (in au).
+        y : float
+            Body's 'y' coordinate (in au).
+        z : float
+            Body's 'z' coordinate (in au).
+        vx : float
+            Body's 'vx' velocity component (in au/day).
+        vy : float
+            Body's 'vy' velocity component (in au/day).
+        vz : float
+            Body's 'vz' velocity component (in au/day).
     
-    Returns: tuple of floats: a, e, i, longnode, z, argperi, meananom.
-             a : Semi-major axis (in au).
-             e : Eccentricity.
-             i : Inclination (in degrees).
-             longnode: Longitude of ascending node (in degrees).
-             argperi: Argument of perihelion (in degrees).
-             meananom: Mean anomaly (at pams. epoch, in degrees).
+    Returns:
+        tuple[float]:
+            - a : Semi-major axis (in au).
+            - e : Eccentricity.
+            - i : Inclination (in degrees).
+            - longnode: Longitude of ascending node (in degrees).
+            - argperi: Argument of perihelion (in degrees).
+            - meananom: Mean anomaly (at pams. epoch, in degrees).
     """
-    x_ = ctypes.c_double(x); y_ = ctypes.c_double(y); z_ = ctypes.c_double(z)
-    vx_ = ctypes.c_double(vx); vy_ = ctypes.c_double(vy); vz_ = ctypes.c_double(vz)
-    
-    a = ctypes.c_double(0); e = ctypes.c_double(0); i = ctypes.c_double(0)
-    longnode = ctypes.c_double(0); argperi = ctypes.c_double(0)
-    meananom = ctypes.c_double(0)
-    
-    args = (x_, y_, z_, vx_, vy_, vz_, a, e, i, longnode, argperi, meananom)
+    a = ffi.new("double *")
+    e = ffi.new("double *")
+    i = ffi.new("double *")
+    longnode = ffi.new("double *")
+    argperi = ffi.new("double *")
+    meananom = ffi.new("double *")
 
-    cutils.params_from_state(*args)
-    return a.value, e.value, i.value, longnode.value, argperi.value, meananom.value
+    lib.params_from_state(
+        x,
+        y,
+        z,
+        vx,
+        vy,
+        vz,
+        a,
+        e,
+        i,
+        longnode,
+        argperi,
+        meananom,
+    )
+
+    return (
+        a[0],
+        e[0],
+        i[0],
+        longnode[0],
+        argperi[0],
+        meananom[0],
+    )
 
 PI         = 3.14159265358979323846
 TWOPI      = 6.283185307179586476925287

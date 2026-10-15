@@ -1,15 +1,5 @@
-/* gcc cutils.c -o cutils.o -fPIC -shared */
-
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <math.h>
-/*#include <time.h>*/
-/*#include "novas.h"*/
-/*#include "novascon.h"*/
 #include "cutils.h"
-
-/*#define TJDEPOCH 2452665.5*/
 
 double gconst;
 double machine_epsilon;
@@ -286,7 +276,7 @@ void cartesian(double gm,
 /*---------------------------------------------------------------------*/
 
 
-/* state_equatorial_heliocentric: computes the position amd velocity of an orbit
+/* state_equatorial_heliocentric: computes the position and velocity of an orbit
 **                                and returns it in equatorial cartesian coordinate
 */
 void state_equatorial_heliocentric(double jd, double tjdepoch, double a, double e, double incl, double longnode, double argperi, double meananom, double *x, double *y, double *z, double *vx, double *vy, double *vz)
